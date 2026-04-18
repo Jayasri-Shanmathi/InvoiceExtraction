@@ -68,7 +68,8 @@ async def save_invoice_data(db: AsyncSession, invoice_data: dict):
         await db.flush()
 
         # 2️⃣ Invoice Header (MANUAL FIELD MAPPING ONLY)
-        header = invoice_data.get("invoice_header", {})
+        header    = invoice_data.get("invoice_header", {})
+        analytics = invoice_data.get("_analytics", {})
 
         invoice_header = InvoiceHeader(
             vendor_id=vendor.vendor_id,
@@ -78,9 +79,13 @@ async def save_invoice_data(db: AsyncSession, invoice_data: dict):
             invoice_amount=header.get("invoice_amount"),
             ntby_no=header.get("ntby_no"),
             irn=header.get("irn"),
-
-            # 🚨 FORCE JSON NULL
-            po_references=None
+            po_references=None,
+            # Analytics columns
+            status=analytics.get("status", "valid"),
+            issues=analytics.get("issues", []),
+            is_anomaly=analytics.get("is_anomaly", False),
+            is_duplicate=analytics.get("is_duplicate", False),
+            confidence_score=analytics.get("confidence_score"),
         )
 
         db.add(invoice_header)
@@ -135,3 +140,120 @@ async def save_invoice_data(db: AsyncSession, invoice_data: dict):
     except Exception as e:
         await db.rollback()
         raise e
+
+
+# ── Analytics queries ──────────────────────────────────────────────────────────
+
+async def get_all_invoice_amounts(db: AsyncSession) -> list[float]:
+    """Returns all invoice amounts for global anomaly detection."""
+    result = await db.execute(
+        select(InvoiceHeader.invoice_amount).where(InvoiceHeader.invoice_amount.isnot(None))
+    )
+    return [float(row[0]) for row in result.fetchall()]
+
+
+async def get_vendor_invoice_amounts(db: AsyncSession, vendor_name: str) -> list[float]:
+    """Returns historical invoice amounts for a specific vendor."""
+    result = await db.execute(
+        select(InvoiceHeader.invoice_amount)
+        .join(Vendor, Vendor.vendor_id == InvoiceHeader.vendor_id)
+        .where(Vendor.name == vendor_name, InvoiceHeader.invoice_amount.isnot(None))
+    )
+    return [float(row[0]) for row in result.fetchall()]
+
+
+async def get_existing_invoices_for_duplicate_check(db: AsyncSession) -> list[dict]:
+    """Returns minimal invoice data needed for duplicate detection."""
+    result = await db.execute(
+        select(
+            Vendor.name.label("vendor_name"),
+            InvoiceHeader.invoice_amount,
+            InvoiceHeader.invoice_date,
+            InvoiceHeader.invoice_number,
+        ).join(Vendor, Vendor.vendor_id == InvoiceHeader.vendor_id)
+    )
+    return [
+        {
+            "vendor_name": row.vendor_name,
+            "invoice_amount": float(row.invoice_amount) if row.invoice_amount else None,
+            "invoice_date": str(row.invoice_date) if row.invoice_date else None,
+            "invoice_number": row.invoice_number,
+        }
+        for row in result.fetchall()
+    ]
+
+
+async def get_analytics_summary(db: AsyncSession) -> dict:
+    """Aggregated data for the /analytics endpoint."""
+    from sqlalchemy import func
+
+    # Total spend
+    total = await db.execute(select(func.sum(InvoiceHeader.invoice_amount)))
+    total_spend = float(total.scalar() or 0)
+
+    # Vendor-wise spend
+    vendor_spend_rows = await db.execute(
+        select(Vendor.name, func.sum(InvoiceHeader.invoice_amount).label("total"))
+        .join(Vendor, Vendor.vendor_id == InvoiceHeader.vendor_id)
+        .group_by(Vendor.name)
+    )
+    vendor_spend = {row.name: float(row.total or 0) for row in vendor_spend_rows.fetchall()}
+
+    # Monthly spend
+    monthly_rows = await db.execute(
+        select(
+            func.to_char(InvoiceHeader.invoice_date, "YYYY-MM").label("month"),
+            func.sum(InvoiceHeader.invoice_amount).label("total"),
+        )
+        .where(InvoiceHeader.invoice_date.isnot(None))
+        .group_by("month")
+        .order_by("month")
+    )
+    monthly_spend = {row.month: float(row.total or 0) for row in monthly_rows.fetchall()}
+
+    # Counts
+    anomaly_count = await db.execute(
+        select(func.count()).where(InvoiceHeader.is_anomaly == True)
+    )
+    faulty_count = await db.execute(
+        select(func.count()).where(InvoiceHeader.status == "faulty")
+    )
+
+    return {
+        "total_spend": total_spend,
+        "vendor_spend": vendor_spend,
+        "monthly_spend": monthly_spend,
+        "anomaly_count": int(anomaly_count.scalar() or 0),
+        "faulty_count": int(faulty_count.scalar() or 0),
+    }
+
+
+async def get_alerts(db: AsyncSession) -> dict:
+    """Returns lists of faulty, anomalous, and duplicate invoices."""
+    def _row_to_dict(row):
+        return {
+            "invoice_header_id": row.invoice_header_id,
+            "invoice_number": row.invoice_number,
+            "invoice_amount": float(row.invoice_amount) if row.invoice_amount else None,
+            "status": row.status,
+            "issues": row.issues,
+            "is_anomaly": row.is_anomaly,
+            "is_duplicate": row.is_duplicate,
+            "confidence_score": row.confidence_score,
+        }
+
+    faulty = await db.execute(
+        select(InvoiceHeader).where(InvoiceHeader.status == "faulty")
+    )
+    anomalous = await db.execute(
+        select(InvoiceHeader).where(InvoiceHeader.is_anomaly == True)
+    )
+    duplicates = await db.execute(
+        select(InvoiceHeader).where(InvoiceHeader.is_duplicate == True)
+    )
+
+    return {
+        "faulty_invoices": [_row_to_dict(r) for r in faulty.scalars().all()],
+        "anomalous_invoices": [_row_to_dict(r) for r in anomalous.scalars().all()],
+        "duplicate_invoices": [_row_to_dict(r) for r in duplicates.scalars().all()],
+    }

@@ -1,4 +1,4 @@
-from sqlalchemy import Column,Integer,String,Text,Date,ForeignKey,Numeric,JSON
+from sqlalchemy import Column, Integer, String, Text, Date, ForeignKey, Numeric, JSON, Boolean, Float
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
 
@@ -29,6 +29,13 @@ class InvoiceHeader(Base):
         ntby_no=Column(String(100))
         po_references=Column(JSON,nullable=True)
         irn=Column(String(255))
+
+        # Analytics columns
+        status=Column(String(20), default="valid")          # "valid" | "faulty"
+        issues=Column(JSON, nullable=True)                   # list of issue strings
+        is_anomaly=Column(Boolean, default=False)
+        is_duplicate=Column(Boolean, default=False)
+        confidence_score=Column(Float, nullable=True)
 
         vendor=relationship("Vendor",back_populates="invoices")
         invoice_items = relationship("InvoiceItems", back_populates="invoice")

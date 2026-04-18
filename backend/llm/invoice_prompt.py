@@ -86,3 +86,29 @@ Return JSON in this exact structure:
   }
 }
 """
+
+
+# Stricter fallback prompt used on retry attempts
+INVOICE_EXTRACTION_PROMPT_STRICT = """You are a precise invoice data extraction engine.
+
+CRITICAL: Return ONLY a raw JSON object. No markdown, no code blocks, no explanation.
+
+EXAMPLE INPUT: Invoice from ABC Ltd, GSTIN 29ABCDE1234F1Z5, Invoice No INV-001, Date 2024-01-15, Total Rs 11800 (taxable 10000, CGST 9% = 900, SGST 9% = 900)
+
+EXAMPLE OUTPUT:
+{
+  "vendor": {"name": "ABC Ltd", "address": null, "email": null, "gst_no": "29ABCDE1234F1Z5", "contact": null},
+  "invoice_header": {"invoice_number": "INV-001", "invoice_date": "2024-01-15", "due_date": null, "invoice_amount": 11800, "ntby_no": null, "po_references": null, "irn": null},
+  "items": [{"code": null, "description": null, "uom": null, "billed_qty": null, "rate": null, "discount_percent": null, "discount_amount": null, "taxable_value": 10000, "hsn_code": null, "cgst_percent": 9, "cgst_amount": 900, "sgst_percent": 9, "sgst_amount": 900, "igst_percent": null, "igst_amount": null, "roundoff": null, "total_value": 11800}],
+  "summary": {"product_total": null, "taxable_value_total": 10000, "freight_charges": null, "tax_percentage": null, "cgst_total": 900, "sgst_total": 900, "igst_total": null, "tcs_percent": null, "tcs_amount": null, "roundoff_amount": null, "grand_total": 11800, "buyer_name": null}
+}
+
+RULES:
+- Numbers must be actual numbers, never strings.
+- Dates must be YYYY-MM-DD format.
+- Use null (not "null") for missing values.
+- CGST+SGST OR IGST — never both.
+- CGST percent must equal SGST percent.
+- grand_total = taxable_value_total + all tax totals.
+- Return the exact same JSON structure as the example above. No extra fields.
+"""

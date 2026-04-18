@@ -2,7 +2,7 @@ import { useState } from "react";
 import { uploadInvoice } from "../services/invoiceApi";
 import { useNavigate } from "react-router-dom";
 
-export default function Home() {
+export default function Upload() {
   const [file, setFile] = useState(null);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
@@ -12,9 +12,8 @@ export default function Home() {
 
     try {
       setLoading(true);
-      const invoice = await uploadInvoice(file);
-
-      navigate("/preview", { state: { data: invoice } });
+      const result = await uploadInvoice(file);
+      navigate("/preview", { state: result });
     } catch (err) {
       console.error(err);
       alert("Invoice extraction failed");
@@ -26,9 +25,7 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center">
       <div className="bg-white rounded-xl shadow-lg p-8 w-[400px]">
-        <h1 className="text-2xl font-bold text-center mb-2">
-          Invoice Extraction
-        </h1>
+        <h1 className="text-2xl font-bold text-center mb-2">Invoice Extraction</h1>
         <p className="text-gray-500 text-center mb-6">
           Upload an invoice to extract structured data
         </p>
@@ -48,7 +45,7 @@ export default function Home() {
         <button
           onClick={handleUpload}
           disabled={loading}
-          className="w-full mt-6 bg-green-600 text-white py-2 rounded-lg hover:bg-green-700 transition"
+          className="w-full mt-6 bg-green-600 text-white py-2 rounded-lg hover:bg-green-700 transition disabled:opacity-60"
         >
           {loading ? "Extracting..." : "Extract Invoice"}
         </button>
@@ -58,6 +55,13 @@ export default function Home() {
             AI is reading your invoice...
           </p>
         )}
+
+        <button
+          onClick={() => navigate("/analytics")}
+          className="w-full mt-3 border border-gray-300 text-gray-600 py-2 rounded-lg hover:bg-gray-50 transition"
+        >
+          View Analytics
+        </button>
       </div>
     </div>
   );
